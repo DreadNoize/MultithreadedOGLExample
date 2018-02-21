@@ -35,8 +35,6 @@
 #include <chrono>
 //#include <unistd.h>
 
-#include "vertex.hpp"
-
 using namespace gl;
 
 // "Members"
