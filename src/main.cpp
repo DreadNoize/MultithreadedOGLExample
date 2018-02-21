@@ -370,7 +370,7 @@ void loadTexture(std::vector<std::uint8_t>& pixel,
   uint8_t* data_ptr;
   int format = STBI_default;
 
-  data_ptr = stbi_load("../../resources/chalet.jpg", &width, &height, &format, STBI_rgb_alpha);
+  data_ptr = stbi_load("../../resources/uvtemplate.tga", &width, &height, &format, STBI_rgb_alpha);
 
   if (!data_ptr) {
     throw std::logic_error(std::string{"stb_image: "} + stbi_failure_reason());
