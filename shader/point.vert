@@ -1,4 +1,4 @@
-#version 150
+#version 330
 #extension GL_ARB_explicit_attrib_location : require
 
 layout(location = 0) in vec3 in_position;
@@ -8,9 +8,14 @@ uniform mat4 ProjectionMatrix;
 uniform mat4 ViewMatrix;
 uniform mat4 ModelMatrix;
 
-out vec2 pass_color;
+uniform mat4 SecondView;
+
+out vec2 pass_uvs;
+out float pass_depth;
 
 void main() {
+  vec4 temp = ModelMatrix * vec4(in_position, 1.0); 
   gl_Position = (ProjectionMatrix * ViewMatrix * ModelMatrix) * vec4(in_position, 1.0); 
-  pass_color = in_uvs;
+  pass_uvs = in_uvs;
+  pass_depth = normalize(gl_Position).z;
 }

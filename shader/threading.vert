@@ -15,6 +15,7 @@ uniform mat4 TestMatrix;
 out vec2 pass_uvs;
 
 void main() {
+  
   gl_Position = (ProjectionMatrix  * ViewMatrix * ModelMatrix) * vec4(in_position, 1.0);
   // pass_normal = (NormalMatrix * vec4(in_normal, 0.)).xyz;
   pass_uvs = in_uvs;

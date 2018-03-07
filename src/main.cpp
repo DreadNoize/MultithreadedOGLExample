@@ -38,22 +38,26 @@ using namespace gl;
 
 // "Members"
 // window specs
-int height = 1024;
 int width = 1280;
+int height = 1024;
 
 // windows/contexts
 GLFWwindow *window;
 GLFWwindow *offscreen_context;
 
 // vao
-GLuint quad_vertex_array;
-GLuint model_vertex_array;
-GLuint model_uv_buffer;
-    // vbo
-    GLuint quad_vertex_buffer;
-GLuint model_vertex_buffer;
+GLuint quad_vao;
+GLuint model_vao;
+GLuint model_uv_vao;
+GLuint grid_vao;
+GLuint grid_uv_vao;
+// vbo
+GLuint quad_vbo;
+GLuint model_vbo;
+GLuint grid_vbo;
 // index buffer
-GLuint model_index_buffer;
+GLuint model_ibo;
+GLuint grid_ibo;
 // shader programs
 GLuint default_program;
 GLuint quad_program;
@@ -65,6 +69,7 @@ GLuint quad_handle;
 GLuint fbo_handle;
 GLuint rb_handle;
 GLuint tex_handle;
+GLuint depth_handle;
 
 // mutex
 std::mutex gl_mutex;
@@ -74,15 +79,29 @@ double m_last_second_time;
 unsigned m_frames_per_second;
 
 // matrices
-glm::fmat4 view_transform = glm::fmat4{1.0f};
+glm::fmat4 view_transform = glm::translate(glm::fmat4{1.0f}, glm::vec3{0.0f,0.0f,5.0f});
+glm::fmat4 second_view_rot = glm::rotate(glm::fmat4{1.0f}, -0.1f, glm::vec3(0, 1.0, 0));
 glm::fmat4 view_projection = glm::fmat4{1.0f};
 glm::fmat4 model_matrix = glm::fmat4{1.0f};
+glm::fmat4 second_view = glm::translate(second_view_rot, glm::vec3{0.0f,0.0f,5.0f});
+
+
+// timers
+GLuint64 start_time;
+GLuint64 stop_time;
+
+GLuint query_handle[4];
+GLuint query_handle_th[4];
+
+GLint stopTimerAvailable = 0;
+
+
 
 
 GLsizei n_elements;
 
 // quad
-float vertices[] = {
+float vertices_quad[] = {
     -1.0, -1.0, 0.0,
     0.0, 0.0,
     1.0, -1.0, 0.0,
@@ -93,6 +112,10 @@ float vertices[] = {
     1.0, 1.0
 };
 
+std::vector<glm::vec3> g_vertices;
+std::vector<glm::uvec3> g_indices;
+std::vector<glm::vec2> g_uvs;
+
 std::vector<glm::vec3> m_vertices;
 std::vector<glm::vec2> m_uvs;
 std::vector<glm::vec3> m_normals;
@@ -101,18 +124,21 @@ std::vector<uint32_t> m_indices;
 void printMatrix(glm::fmat4 const& matrix, std::string const& name);
 
 // UNIFORM FUNCTIONS
-void updateView() {
+void updateView(GLuint const& program) {
   glm::fmat4 view_matrix = glm::inverse(view_transform);
-  GLuint location = glGetUniformLocation(default_program, "ViewMatrix");  
+  GLuint location = glGetUniformLocation(program, "ViewMatrix"); 
   glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(view_matrix));
+  glm::fmat4 sec_view_matrix = glm::inverse(second_view);
+  location = glGetUniformLocation(program, "SecondView"); 
+  glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(sec_view_matrix));
   printMatrix(view_matrix, "View");
 }
-void updateProjection() {
-  GLuint location = glGetUniformLocation(default_program, "ProjectionMatrix");
+void updateProjection(GLuint const& program) {
+  GLuint location = glGetUniformLocation(program, "ProjectionMatrix");
   glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(view_projection));
   printMatrix(view_projection, "Projection");
 }
-void setProjection(GLFWwindow* win, int w, int h) {
+void setProjection(GLFWwindow* win, int w, int h, GLuint const& program) {
   glViewport(0, 0, w, h);
 
   float aspect_ratio = float(w)/float(h);
@@ -122,17 +148,16 @@ void setProjection(GLFWwindow* win, int w, int h) {
   glm::fmat4 cam_projection = glm::perspective(fov, aspect_ratio, 0.1f, 100.0f);
   printMatrix(cam_projection, "Cam");
   view_projection = cam_projection;
-  updateProjection();
+  updateProjection(program);
 }
-void updateUniforms() {
-  glUseProgram(default_program);
+void updateUniforms(GLuint const& program) {
+  glUseProgram(program);
   int w_width, w_height;
   glfwGetFramebufferSize(window, &w_width, &w_height);
   std::cout << "W: " << w_width << " H: " << w_height << std::endl;
-  setProjection(window, width, height);
+  setProjection(window, width, height, program);
 
-  view_transform = glm::translate(view_transform, glm::vec3{0.0f,0.0f,10.0f});
-  updateView();
+  updateView(program);
 }
 
 // UTILS
@@ -216,7 +241,7 @@ void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) 
 void key_callback_thread(GLFWwindow *win, int key, int scancode, int action, int mods) {
   /* if ((key == GLFW_KEY_ESCAPE) && action == GLFW_PRESS) {
     glfwSetWindowShouldClose(window, 1);
-  } else */ if (key == GLFW_KEY_W && (action == GLFW_REPEAT || action== GLFW_PRESS)) {
+  } else  if (key == GLFW_KEY_W && (action == GLFW_REPEAT || action== GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{0.0f, 0.0f, -0.1f});
 		updateView();
 	} else if (key == GLFW_KEY_S && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
@@ -234,7 +259,7 @@ void key_callback_thread(GLFWwindow *win, int key, int scancode, int action, int
 	} else if (key == GLFW_KEY_Q && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{ 0.0f, -0.1f, 0.0f });
 		updateView();
-	}
+	}*/
 }
 void mouse_callback(GLFWwindow *win, double x, double y) {
 }
@@ -424,7 +449,7 @@ void initWindow() {
 
     // set mouse and key callback
     glfwSetKeyCallback(window, key_callback);
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     glfwSetCursorPosCallback(window, mouse_callback);
 
     // initialize glindings in this context
@@ -438,7 +463,7 @@ void initOffscreenWindow() {
   // Init second window for second thread
   glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
   offscreen_context = glfwCreateWindow(width, height, "Offscreen Window", NULL, window);
-  glfwSetKeyCallback(offscreen_context, key_callback_thread);  
+  // glfwSetKeyCallback(offscreen_context, key_callback_thread);  
   if(!offscreen_context) {
     glfwTerminate();
     std::cerr << "Failed to create offscreen context" << std::endl;
@@ -451,35 +476,100 @@ void initShaders() {
   quad_program = loadProgram("../../shader/quad.vert", "../../shader/quad.frag");
 }
 void initQuad() {
-  glGenVertexArrays(1, &quad_vertex_array);
-  glBindVertexArray(quad_vertex_array);
-  glGenBuffers(1, &quad_vertex_buffer);
-  glBindBuffer(GL_ARRAY_BUFFER, quad_vertex_buffer);
+  glGenVertexArrays(1, &quad_vao);
+  glBindVertexArray(quad_vao);
+  glGenBuffers(1, &quad_vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, quad_vbo);
 
-  glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 20, &vertices, GL_STATIC_DRAW);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 20, &vertices_quad, GL_STATIC_DRAW);
 
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), 0);
   glEnableVertexAttribArray(1);
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)(sizeof(float) * 3));
 }
+void genGrid() {
+  float W = width/16;
+  float H = height/16;
+
+  std::cout << "W: " << W << "; H: " << H << std::endl;
+
+  for(int i = 0; i < W+1; i++) {
+    for(int j = 0; j < H+1; j++) {
+      float x = -1.0 + 2 * (i/W);
+      float y = -1.0 + 2 * (j/H);
+	    float z = 0.0;
+
+      // std::cout << "i: " << i << "; j: " << j << std::endl;
+      // std::cout << "i/W: " << i/W << "; j/H: " << j/H << std::endl;
+
+      // std::cout << "pos: " << x << "," << y << "," << z << std::endl;
+
+      g_vertices.push_back(glm::vec3(x,y,z));
+
+      float u = i/W;
+      float v = j/H;
+
+      // std::cout << "uv: " << u << "," << v << std::endl;
+
+      g_uvs.push_back(glm::vec2(u,v));
+
+    }
+  }
+  for(int i = 0; i < H; i++) {
+    for(int j = 0; j < W; j++) {
+      int r1 = j * (H+1);
+      int r2 = (j+1) * (H+1);
+
+      g_indices.push_back(glm::uvec3(r1+i, r1+i+1, r2+i+1));
+      g_indices.push_back(glm::uvec3(r1+i, r2+i+1, r2+i));
+
+      // std::cout << "Triangle1: " << r1+i << "," << r1+i+1 << "," << r2+i+1 << std::endl;      
+      // std::cout << "Triangle2: " << r1+i << "," << r2+i+1 << "," << r2+i << std::endl;
+    }
+  }   
+}
+void initGrid() {
+  glGenVertexArrays(1, &grid_vao);
+  glBindVertexArray(grid_vao);
+  glGenBuffers(1, &grid_vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, grid_vbo);
+
+  glBufferData(GL_ARRAY_BUFFER, sizeof(glm::vec3) * g_vertices.size(), g_vertices.data(), GL_STATIC_DRAW);
+
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+
+  glGenBuffers(1, &grid_uv_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, grid_uv_vao);
+
+  glBufferData(GL_ARRAY_BUFFER, sizeof(glm::vec2) * g_uvs.size(), g_uvs.data(), GL_STATIC_DRAW);
+
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);
+
+  glGenBuffers(1, &grid_ibo);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, grid_ibo);
+
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(glm::vec3) * g_indices.size(), g_indices.data(), GL_STATIC_DRAW);
+}
 void initGeometry() {
   std::cout << "Loading model ..." << std::endl;
-  loadModel("../../resources/chalet.obj");
+  loadModel("../../resources/cube.obj");
 
-  glGenVertexArrays(1, &model_vertex_array);
-  glBindVertexArray(model_vertex_array);
+  glGenVertexArrays(1, &model_vao);
+  glBindVertexArray(model_vao);
 
-  glGenBuffers(1, &model_vertex_buffer);
-  glBindBuffer(GL_ARRAY_BUFFER, model_vertex_buffer);
+  glGenBuffers(1, &model_vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, model_vbo);
   std::cout << "Binding Buffer Data (Vertex) ..." << std::endl;
   glBufferData(GL_ARRAY_BUFFER, sizeof(glm::vec3) * m_vertices.size(), m_vertices.data(), GL_STATIC_DRAW);
 
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (void*) 0);
 
-  glGenBuffers(1, &model_uv_buffer);
-  glBindBuffer(GL_ARRAY_BUFFER, model_uv_buffer);
+  glGenBuffers(1, &model_uv_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, model_uv_vao);
   std::cout << "Binding Buffer Data (UV) ..." << std::endl;
   glBufferData(GL_ARRAY_BUFFER, sizeof(glm::vec2) * m_uvs.size(), m_uvs.data(), GL_STATIC_DRAW);
   glEnableVertexAttribArray(1);
@@ -495,7 +585,16 @@ void initTexture() {
 
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
 
-  glActiveTexture(GL_TEXTURE0);
+  glActiveTexture(GL_TEXTURE2);
+  glGenTextures(1, &depth_handle);
+  glBindTexture(GL_TEXTURE_2D, depth_handle);
+
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+
+  /* glActiveTexture(GL_TEXTURE0);
   glGenTextures(1, &tex_handle);
   glBindTexture(GL_TEXTURE_2D, tex_handle);
 
@@ -514,20 +613,22 @@ void initTexture() {
 
   std::cout << "Width: " << width << " Height: " << height << std::endl;
 
-  glTexImage2D(GL_TEXTURE_2D, 0, channel, width, height, 0, channel, channel_format, pixels.data());
+  glTexImage2D(GL_TEXTURE_2D, 0, channel, width, height, 0, channel, channel_format, pixels.data()); */
 }
 void initFramebufferThread() {
   glActiveTexture(GL_TEXTURE3);
-  glGenRenderbuffers(1, &rb_handle);
-  glBindRenderbuffer(GL_RENDERBUFFER, rb_handle);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+  // glGenRenderbuffers(1, &rb_handle);
+  // glBindRenderbuffer(GL_RENDERBUFFER, rb_handle);
+  // glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
 
 
   glGenFramebuffers(1, &fbo_handle);
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_handle);
-  glBindRenderbuffer(GL_RENDERBUFFER, rb_handle);
-  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rb_handle);
+  // glBindRenderbuffer(GL_RENDERBUFFER, rb_handle);
+  // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rb_handle);
   glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, quad_handle, 0);
+  glActiveTexture(GL_TEXTURE2);
+  glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depth_handle, 0);
 
   GLenum draw_buffer[1] = {GL_COLOR_ATTACHMENT0};
   glDrawBuffers(1, draw_buffer);
@@ -549,8 +650,15 @@ void initFramebufferThread() {
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 }
  */
+
+//RENDERING
+/* Render thread */
 void render() {
   std::cout << "Rendering ..." << std::endl;
+
+  // glGenQueries(4, query_handle_th);
+  // glQueryCounter(query_handle_th[0], GL_TIMESTAMP);  
+
   glfwMakeContextCurrent(offscreen_context);
   glbinding::Binding::initialize();
   watch_gl_errors();
@@ -559,20 +667,31 @@ void render() {
   glDepthFunc(GL_LESS);
   // glBindTexture(GL_TEXTURE_2D, quad_handle);
   initGeometry();
-  updateUniforms();
+  updateUniforms(default_program);
   gl_mutex.lock();
   initFramebufferThread();
   gl_mutex.unlock();
+
+ /*  glQueryCounter(query_handle_th[1], GL_TIMESTAMP);
+  stopTimerAvailable = 0;
+  while (!stopTimerAvailable) {
+    glGetQueryObjectiv(query_handle_th[1], GL_QUERY_RESULT_AVAILABLE, &stopTimerAvailable);
+  }
+  glGetQueryObjectui64v(query_handle_th[0], GL_QUERY_RESULT, &start_time);
+  glGetQueryObjectui64v(query_handle_th[1], GL_QUERY_RESULT, &stop_time);
+  std::cout << "Init Time (RENDER THREAD): " << (stop_time - start_time)/1000000.0 << " ms" << std::endl; */
+  
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
   for(;;) {
     gl_mutex.lock();
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_handle);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glBindVertexArray(model_vertex_array);
+    glBindVertexArray(model_vao);
     glUseProgram(default_program);
 
     glm::fmat4 model_matrix_ = glm::fmat4{1.0f};
-	  model_matrix_ = glm::rotate(model_matrix_, float(glfwGetTime()) * 2.0f, glm::vec3{1.0f,1.0f,1.0f});
+	  // model_matrix_ = glm::rotate(model_matrix_, float(glfwGetTime()) *0.1f, glm::vec3{0.0f,1.0f,0.0f});
     GLuint location = glGetUniformLocation(default_program, "ModelMatrix");
     glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(model_matrix_));
 
@@ -583,38 +702,73 @@ void render() {
   }
 }
 
+/* Warping thread */
 void draw() {
   glActiveTexture(GL_TEXTURE3);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glUseProgram(quad_program);
-  glBindVertexArray(quad_vertex_array);
+  glBindVertexArray(grid_vao);
+  // glBindVertexArray(quad_vao);
   GLuint location = glGetUniformLocation(quad_program, "quad_tex");
   glUniform1i(location, 3);
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_2D, depth_handle);
+  location = glGetUniformLocation(quad_program, "depth_tex");
+  glUniform1i(location, 2);
 
-  model_matrix = glm::rotate(model_matrix, float(glfwGetTime()) * 0.00001f, glm::vec3{0.0,0.0,1.0});
+  // model_matrix = glm::rotate(model_matrix, float(glfwGetTime()) * 0.00001f, glm::vec3{0.0,0.0,1.0});
   location = glGetUniformLocation(quad_program, "ModelMatrix");
   glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(model_matrix));
   // printMatrix(model_matrix, "Model");
 
-  glDrawArrays(GL_TRIANGLE_STRIP, 0, 8);
+  //glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+  glDrawElements(GL_TRIANGLES, g_indices.size()*3, GL_UNSIGNED_INT, 0);
+  // glDrawArrays(GL_TRIANGLE_STRIP, 0, 8);
 }
 
 int main(int argc, char **argv) {
   initWindow();
+
+  glGenQueries(4, query_handle);
+  glQueryCounter(query_handle[0], GL_TIMESTAMP);
+
   initShaders();
   initTexture();
   initQuad();
+  genGrid();
+  initGrid();
   initOffscreenWindow();
   std::cout << "Start thread" << std::endl;
   std::thread t = std::thread(render);
   glfwMakeContextCurrent(window);
   glBindTexture(GL_TEXTURE_2D, quad_handle);
+
+  updateUniforms(quad_program );
+  glQueryCounter(query_handle[1], GL_TIMESTAMP);
+  stopTimerAvailable = 0;
+  while (!stopTimerAvailable) {
+      glGetQueryObjectiv(query_handle[1], GL_QUERY_RESULT_AVAILABLE, &stopTimerAvailable);
+  }
+  glGetQueryObjectui64v(query_handle[0], GL_QUERY_RESULT, &start_time);
+  glGetQueryObjectui64v(query_handle[1], GL_QUERY_RESULT, &stop_time);
+
+  std::cout << "Initialisation Time (MAIN THREAD): " << (stop_time - start_time)/1000000.0 << " ms" << std::endl;
   while (!glfwWindowShouldClose(window)) {
+    // glQueryCounter(query_handle[2], GL_TIMESTAMP);    
     glfwPollEvents();
     draw();
     glfwSwapBuffers(window);
     show_fps(window);
+    /* glQueryCounter(query_handle[3], GL_TIMESTAMP);
+    stopTimerAvailable = 0;
+    while (!stopTimerAvailable) {
+      glGetQueryObjectiv(query_handle[3], GL_QUERY_RESULT_AVAILABLE, &stopTimerAvailable);
+    }
+    glGetQueryObjectui64v(query_handle[2], GL_QUERY_RESULT, &start_time);
+    glGetQueryObjectui64v(query_handle[3], GL_QUERY_RESULT, &stop_time);
+
+    std::cout << "Render Time (MAIN THREAD): " << (stop_time - start_time)/1000000.0 << " ms" << std::endl; */
   }
   glfwSetWindowShouldClose(offscreen_context, 1);
   t.join();
