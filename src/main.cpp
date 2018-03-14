@@ -83,7 +83,7 @@ glm::fmat4 view_transform = glm::translate(glm::fmat4{1.0f}, glm::vec3{0.0f,0.0f
 glm::fmat4 second_view_rot = glm::rotate(glm::fmat4{1.0f}, -0.1f, glm::vec3(0, 1.0, 0));
 glm::fmat4 view_projection = glm::fmat4{1.0f};
 glm::fmat4 model_matrix = glm::fmat4{1.0f};
-glm::fmat4 second_view = glm::translate(second_view_rot, glm::vec3{0.0f,0.0f,5.0f});
+glm::fmat4 second_view = glm::translate(glm::fmat4{1.0f}, glm::vec3{0.1f,0.0f,5.0f});
 
 
 // timers
@@ -95,7 +95,9 @@ GLuint query_handle_th[4];
 
 GLint stopTimerAvailable = 0;
 
-
+bool clicked = false;
+double x_clicked; // x coordinate of mouse, when clicked.
+double y_clicked; // y coordinate of mouse, when clicked.
 
 
 GLsizei n_elements;
@@ -218,25 +220,25 @@ void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) 
     glfwSetWindowShouldClose(offscreen_context, 1);
     glfwDestroyWindow(offscreen_context);
     glfwSetWindowShouldClose(win, 1);
-  } /* else if (key == GLFW_KEY_W && (action == GLFW_REPEAT || action== GLFW_PRESS)) {
+  }  else if (key == GLFW_KEY_W && (action == GLFW_REPEAT || action== GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{0.0f, 0.0f, -0.1f});
-		updateView();
+		updateView(quad_program);
 	} else if (key == GLFW_KEY_S && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{0.0f, 0.0f, 0.1f});
-		updateView();
+		updateView(quad_program);
 	} else if (key == GLFW_KEY_D && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{ -0.1f, 0.0f, 0.0f });
-		updateView();
+		updateView(quad_program);
 	} else if (key == GLFW_KEY_A && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{ 0.1f, 0.0f, 0.0f });
-		updateView();
+		updateView(quad_program);
 	} else if (key == GLFW_KEY_E && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{ 0.0f, 0.1f, 0.0f });
-		updateView();
+		updateView(quad_program);
 	} else if (key == GLFW_KEY_Q && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{ 0.0f, -0.1f, 0.0f });
-		updateView();
-	} */
+		updateView(quad_program);
+	} 
 }
 void key_callback_thread(GLFWwindow *win, int key, int scancode, int action, int mods) {
   /* if ((key == GLFW_KEY_ESCAPE) && action == GLFW_PRESS) {
@@ -262,6 +264,28 @@ void key_callback_thread(GLFWwindow *win, int key, int scancode, int action, int
 	}*/
 }
 void mouse_callback(GLFWwindow *win, double x, double y) {
+  if(clicked) {
+    if(x - x_clicked < 0.0) {
+      x_clicked = x;
+      view_transform = glm::rotate(view_transform, float(x*0.000005), glm::vec3{0.0,1.0,0.0});
+      updateView(quad_program);
+    } else if(x - x_clicked > 0.0) {
+      x_clicked = x;
+      view_transform = glm::rotate(view_transform, float(x*0.000005), glm::vec3{0.0,-1.0,0.0});
+      updateView(quad_program);
+    }
+  }
+  // std::cout << "MouseX: " << x << "MouseY: " << y << std::endl;
+}
+
+void click_callback(GLFWwindow *win, int button, int action, int mods) {
+  if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
+    clicked = true;
+    glfwGetCursorPos(win, &x_clicked, &y_clicked);
+    // std::cout << "MouseX: " << x_clicked << "MouseY: " << y_clicked << std::endl;
+  } else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {
+    clicked = false;
+  }
 }
 
 // LOADING
@@ -314,16 +338,20 @@ GLuint loadShader(std::string const &shader_path, GLenum type) {
 
   return shader;
 }
-GLuint loadProgram(std::string const &vertex_shader_path, std::string const &fragment_shader_path) {
+GLuint loadProgram(std::string const &vertex_shader_path, std::string const &fragment_shader_path, std::string const geometry_shader_path = "") {
   GLuint program = glCreateProgram();
 
   GLuint vertex_shader = loadShader(vertex_shader_path, GL_VERTEX_SHADER);
   GLuint fragment_shader = loadShader(fragment_shader_path, GL_FRAGMENT_SHADER);
-
+  GLuint geometry_shader;
   // attach shaders to program
   glAttachShader(program, vertex_shader);
   glAttachShader(program, fragment_shader);
 
+  if(!geometry_shader_path.empty()) {
+    geometry_shader = loadShader(geometry_shader_path, GL_GEOMETRY_SHADER);
+    glAttachShader(program, geometry_shader);
+  }
   // link program
   glLinkProgram(program);
 
@@ -354,6 +382,10 @@ GLuint loadProgram(std::string const &vertex_shader_path, std::string const &fra
   glDeleteShader(vertex_shader);
   glDeleteShader(fragment_shader);
 
+  if(!geometry_shader_path.empty()) {
+    glDetachShader(program, geometry_shader);
+    glDeleteShader(geometry_shader);    
+  }
   return program;
 }
 /* loading model */
@@ -451,6 +483,7 @@ void initWindow() {
     glfwSetKeyCallback(window, key_callback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetMouseButtonCallback(window, click_callback);
 
     // initialize glindings in this context
     glbinding::Binding::initialize();
@@ -473,7 +506,7 @@ void initOffscreenWindow() {
 void initShaders() {
   default_program = loadProgram("../../shader/point.vert", "../../shader/point.frag");
 
-  quad_program = loadProgram("../../shader/quad.vert", "../../shader/quad.frag");
+  quad_program = loadProgram("../../shader/quad.vert", "../../shader/quad.frag", "../../shader/quad.geom");
 }
 void initQuad() {
   glGenVertexArrays(1, &quad_vao);
@@ -717,7 +750,7 @@ void draw() {
   location = glGetUniformLocation(quad_program, "depth_tex");
   glUniform1i(location, 2);
 
-  // model_matrix = glm::rotate(model_matrix, float(glfwGetTime()) * 0.00001f, glm::vec3{0.0,0.0,1.0});
+  // model_matrix = glm::rotate(model_matrix, float(glfwGetTime()) * 0.00001f, glm::vec3{0.0,1.0,0.0});
   location = glGetUniformLocation(quad_program, "ModelMatrix");
   glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(model_matrix));
   // printMatrix(model_matrix, "Model");
@@ -770,7 +803,10 @@ int main(int argc, char **argv) {
 
     std::cout << "Render Time (MAIN THREAD): " << (stop_time - start_time)/1000000.0 << " ms" << std::endl; */
   }
-  glfwSetWindowShouldClose(offscreen_context, 1);
+  // glfwSetWindowShouldClose(offscreen_context, 1);
   t.join();
+  glfwDestroyWindow(offscreen_context);
+  glfwDestroyWindow(window);  
+  glfwTerminate();
   return 1;
 }

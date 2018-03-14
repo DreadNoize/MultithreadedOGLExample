@@ -1,7 +1,9 @@
 #version 330
 
-in vec2 pass_uvs;
-in float pass_depth;
+in Fragment {
+  vec2 uvs;
+  float depth;
+} fragment;
 
 out vec4 out_color;
 
@@ -10,7 +12,7 @@ uniform sampler2D depth_tex;
 
 
 void main() {
-  if(pass_depth >= 1.0f) {
+  if(fragment.depth >= 1.0f) {
     discard;
   }
   /* if(pass_uvs.x < 0.5) {
@@ -26,7 +28,8 @@ void main() {
       out_color = vec4(0.172, 0.243, 0.313, 1.0); // dark blue
     }
   } */
-  // out_color = texture(quad_tex, pass_uvs);
-  out_color = vec4(pass_depth,pass_depth,pass_depth,1.0);
+  out_color = texture(quad_tex, fragment.uvs);
+  // out_color = vec4(fragment.depth,fragment.depth,fragment.depth,1.0);
+  // out_color = vec4(fragment.uvs.x,0.0,0.0,1.0);
 
 }
