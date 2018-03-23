@@ -14,11 +14,11 @@ out Fragment {
 } fragment;
 
 void main() {
-  // for(int i = 0; i < gl_in.length(); i++){
-  //   if(gl_in[i].gl_Position.z < 1.0) {
-  //     EndPrimitive();
-  //   }
-  // }
+  for(int i = 0; i < gl_in.length(); i++){
+    if(gl_in[i].gl_Position.z > 0.999) {
+      return;
+    }
+  }
   for(int i = 0; i < gl_in.length(); i++){
     // if(gl_in[i].gl_Position.z < 0.1) {
     //   fragment.depth = 0.0;

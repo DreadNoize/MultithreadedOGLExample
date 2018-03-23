@@ -19,6 +19,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#define  FREEIMAGE_LIB
+#include <FreeImage.h>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -34,9 +37,13 @@
 #include <chrono>
 //#include <unistd.h>
 
+#include "trackball.hpp"
+
 using namespace gl;
 
 // "Members"
+// trackball
+Trackball trackball;
 // window specs
 int width = 1280;
 int height = 1024;
@@ -79,11 +86,12 @@ double m_last_second_time;
 unsigned m_frames_per_second;
 
 // matrices
-glm::fmat4 view_transform = glm::translate(glm::fmat4{1.0f}, glm::vec3{0.0f,0.0f,5.0f});
+// glm::fmat4 view_transform = glm::translate(glm::fmat4{1.0f}, glm::vec3{0.0f,0.0f,5.0f});
+glm::fmat4 view_transform = trackball.get_view();
 glm::fmat4 second_view_rot = glm::rotate(glm::fmat4{1.0f}, -0.1f, glm::vec3(0, 1.0, 0));
 glm::fmat4 view_projection = glm::fmat4{1.0f};
 glm::fmat4 model_matrix = glm::fmat4{1.0f};
-glm::fmat4 second_view = glm::translate(glm::fmat4{1.0f}, glm::vec3{0.1f,0.0f,5.0f});
+glm::fmat4 second_view = glm::translate(glm::fmat4{1.0f}, glm::vec3{0.0f,0.0f,5.0f});
 
 
 // timers
@@ -95,7 +103,8 @@ GLuint query_handle_th[4];
 
 GLint stopTimerAvailable = 0;
 
-bool clicked = false;
+bool rmb_clicked = false;
+bool lmb_clicked = false;
 double x_clicked; // x coordinate of mouse, when clicked.
 double y_clicked; // y coordinate of mouse, when clicked.
 
@@ -124,7 +133,7 @@ std::vector<glm::vec3> m_normals;
 std::vector<uint32_t> m_indices;
 
 void printMatrix(glm::fmat4 const& matrix, std::string const& name);
-
+void initShaders();
 // UNIFORM FUNCTIONS
 void updateView(GLuint const& program) {
   glm::fmat4 view_matrix = glm::inverse(view_transform);
@@ -133,12 +142,12 @@ void updateView(GLuint const& program) {
   glm::fmat4 sec_view_matrix = glm::inverse(second_view);
   location = glGetUniformLocation(program, "SecondView"); 
   glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(sec_view_matrix));
-  printMatrix(view_matrix, "View");
+  // printMatrix(view_matrix, "View");
 }
 void updateProjection(GLuint const& program) {
   GLuint location = glGetUniformLocation(program, "ProjectionMatrix");
   glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(view_projection));
-  printMatrix(view_projection, "Projection");
+  // printMatrix(view_projection, "Projection");
 }
 void setProjection(GLFWwindow* win, int w, int h, GLuint const& program) {
   glViewport(0, 0, w, h);
@@ -221,24 +230,36 @@ void key_callback(GLFWwindow *win, int key, int scancode, int action, int mods) 
     glfwDestroyWindow(offscreen_context);
     glfwSetWindowShouldClose(win, 1);
   }  else if (key == GLFW_KEY_W && (action == GLFW_REPEAT || action== GLFW_PRESS)) {
-		view_transform = glm::translate(view_transform, glm::fvec3{0.0f, 0.0f, -0.1f});
+		view_transform = glm::translate(view_transform, glm::fvec3{0.0f, 0.0f, 0.1f});
+	  // updateUniforms(default_program);
 		updateView(quad_program);
 	} else if (key == GLFW_KEY_S && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
-		view_transform = glm::translate(view_transform, glm::fvec3{0.0f, 0.0f, 0.1f});
+		view_transform = glm::translate(view_transform, glm::fvec3{0.0f, 0.0f, -0.1f});
+	  updateUniforms(default_program);
 		updateView(quad_program);
 	} else if (key == GLFW_KEY_D && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{ -0.1f, 0.0f, 0.0f });
+	  updateUniforms(default_program);
 		updateView(quad_program);
 	} else if (key == GLFW_KEY_A && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{ 0.1f, 0.0f, 0.0f });
+	  updateUniforms(default_program);
 		updateView(quad_program);
 	} else if (key == GLFW_KEY_E && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{ 0.0f, 0.1f, 0.0f });
+	  updateUniforms(default_program);
 		updateView(quad_program);
 	} else if (key == GLFW_KEY_Q && (action == GLFW_REPEAT || action == GLFW_PRESS)) {
 		view_transform = glm::translate(view_transform, glm::fvec3{ 0.0f, -0.1f, 0.0f });
+	  updateUniforms(default_program);
 		updateView(quad_program);
-	} 
+	} else if (key == GLFW_KEY_R && action == GLFW_PRESS) {
+    glDeleteProgram(default_program);
+    glDeleteProgram(quad_program);
+    initShaders();
+	  updateUniforms(default_program);
+	  updateUniforms(quad_program);
+  }
 }
 void key_callback_thread(GLFWwindow *win, int key, int scancode, int action, int mods) {
   /* if ((key == GLFW_KEY_ESCAPE) && action == GLFW_PRESS) {
@@ -262,30 +283,78 @@ void key_callback_thread(GLFWwindow *win, int key, int scancode, int action, int
 		view_transform = glm::translate(view_transform, glm::fvec3{ 0.0f, -0.1f, 0.0f });
 		updateView();
 	}*/
+  if (key == GLFW_KEY_R && action == GLFW_PRESS) {
+    glDeleteProgram(default_program);
+    glDeleteProgram(quad_program);
+    initShaders();
+    updateUniforms(default_program);
+    updateUniforms(quad_program);
+  }
 }
 void mouse_callback(GLFWwindow *win, double x, double y) {
-  if(clicked) {
-    if(x - x_clicked < 0.0) {
-      x_clicked = x;
-      view_transform = glm::rotate(view_transform, float(x*0.000005), glm::vec3{0.0,1.0,0.0});
-      updateView(quad_program);
-    } else if(x - x_clicked > 0.0) {
-      x_clicked = x;
-      view_transform = glm::rotate(view_transform, float(x*0.000005), glm::vec3{0.0,-1.0,0.0});
-      updateView(quad_program);
-    }
-  }
+  if(rmb_clicked) {
+    // if(x - x_clicked < 0.0) {
+    //   x_clicked = x;
+    //   view_transform = glm::rotate(view_transform, float(x*0.000005), glm::vec3{0.0,1.0,0.0});
+    //   updateView(quad_program);
+    // } else if(x - x_clicked > 0.0) {
+    //   x_clicked = x;
+    //   view_transform = glm::rotate(view_transform, float(x*0.000005), glm::vec3{0.0,-1.0,0.0});
+    //   updateView(quad_program);
+    // }
+    float yaw = ((float)(x_clicked - x) / 500); 
+    float pitch = ((float)(y_clicked - y) / 500);
+    // std::cout << "YAW: " << yaw << ", PITCH: " << pitch << std::endl;
+
+	  trackball.rotate_T(pitch, yaw);
+    view_transform = trackball.get_view();
+    updateView(default_program);
+    // updateView(quad_program);
+    x_clicked = x;
+    y_clicked = y;
+  } /* else if (lmb_clicked) {
+    float delta_x = (float) (x_clicked - x);
+    float delta_y = (float) (y_clicked - y);
+
+    trackball.pan_T(delta_x*0.01, delta_y*0.01);
+    view_transform = trackball.get_view();
+    updateView(default_program);
+    x_clicked = x;
+    y_clicked = y;
+  } */
   // std::cout << "MouseX: " << x << "MouseY: " << y << std::endl;
 }
 
 void click_callback(GLFWwindow *win, int button, int action, int mods) {
   if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
-    clicked = true;
+    rmb_clicked = true;
     glfwGetCursorPos(win, &x_clicked, &y_clicked);
     // std::cout << "MouseX: " << x_clicked << "MouseY: " << y_clicked << std::endl;
   } else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {
-    clicked = false;
+    rmb_clicked = false;
+  } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+    lmb_clicked = true;
+    glfwGetCursorPos(win, &x_clicked, &y_clicked);
+  } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
+    lmb_clicked = false;
   }
+}
+
+void scroll_callback(GLFWwindow *win, double x_offset, double y_offset) {
+  // std::cout << "Scrolling: " << y_offset << std::endl;
+  // glm::fmat4 temp = trackball.get_view();
+  // printMatrix(temp, "Trackballview before Scroll");
+  // glm::fvec3 cp = trackball.get_camera_position();
+  // std::cout << "Camera position:\n" << "X: " << cp.x << ", Y: " << cp.y << ", Z: " << cp.z << std::endl;   
+  trackball.zoom_T(y_offset * 0.1);
+  // std::cout << "UP: " << trackball.get_up() << std::endl;
+  // printMatrix(view_transform, "VIEW_TRANSFORM");
+  // glm::fmat4 temp2 = trackball.get_view();
+  // printMatrix(temp2, "Trackballview after Scroll");
+  // printMatrix(glm::lookAt(glm::fvec3(0.0f,0.0f,5.0f), glm::fvec3(0.0f,0.0f,0.0f), glm::fvec3(0.0f,1.0f,0.0f)), "LOOKAT");
+  view_transform = trackball.get_view();
+  updateView(default_program);
+  // updateView(quad_program);
 }
 
 // LOADING
@@ -415,17 +484,17 @@ void loadModel(std::string const &modelPath) {
   }
 }
 /* loading textures */
-void loadTexture(std::vector<std::uint8_t>& pixel, 
+void loadTextureSTB(std::vector<std::uint8_t>& pixel, 
                   int& width, 
                   int& height, 
                   GLenum& channel,
                   GLenum& channel_format) {
-  stbi_set_flip_vertically_on_load(true);
+  stbi_set_flip_vertically_on_load(false);
 
   uint8_t* data_ptr;
   int format = STBI_default;
 
-  data_ptr = stbi_load("../../resources/uvtemplate.tga", &width, &height, &format, STBI_rgb_alpha);
+  data_ptr = stbi_load("../../resources/chalet.jpg", &width, &height, &format, STBI_rgb_alpha);
 
   if (!data_ptr) {
     throw std::logic_error(std::string{"stb_image: "} + stbi_failure_reason());
@@ -456,6 +525,36 @@ void loadTexture(std::vector<std::uint8_t>& pixel,
 
   stbi_image_free(data_ptr);
 }
+GLubyte* loadTexture( int& width, 
+                  int& height, 
+                  GLenum& channel,
+                  GLenum& channel_format) {
+  FREE_IMAGE_FORMAT format = FreeImage_GetFileType("../../resources/pig_d.dds", 0);
+  if(format == -1) {
+    std::cerr << "File not found" << std::endl;
+    throw std::logic_error("Texture loading");
+  }
+
+  FIBITMAP* bitmap = FreeImage_Load(format, "../../resources/pig_d.dds");
+
+  int bpp = FreeImage_GetBPP(bitmap);
+
+  FIBITMAP* bitmap32;
+  if(bpp == 32) {
+    bitmap32 = bitmap;
+  } else {
+    bitmap32 = FreeImage_ConvertTo32Bits(bitmap);
+  }
+  channel = GL_RGBA;
+  channel_format = GL_UNSIGNED_BYTE;
+  
+  width = FreeImage_GetWidth(bitmap32);
+  height = FreeImage_GetHeight(bitmap32);
+
+  GLubyte* textureData = FreeImage_GetBits(bitmap32);
+
+  return textureData; 
+}
 
 // INITIALISATION
 void initWindow() {
@@ -484,6 +583,7 @@ void initWindow() {
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetMouseButtonCallback(window, click_callback);
+    glfwSetScrollCallback(window, scroll_callback);
 
     // initialize glindings in this context
     glbinding::Binding::initialize();
@@ -491,12 +591,15 @@ void initWindow() {
     glViewport(0, 0, width, height);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
+
+    //initialize freeimage
+    FreeImage_Initialise(true);
 }
 void initOffscreenWindow() {
   // Init second window for second thread
   glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
   offscreen_context = glfwCreateWindow(width, height, "Offscreen Window", NULL, window);
-  // glfwSetKeyCallback(offscreen_context, key_callback_thread);  
+  glfwSetKeyCallback(offscreen_context, key_callback_thread);  
   if(!offscreen_context) {
     glfwTerminate();
     std::cerr << "Failed to create offscreen context" << std::endl;
@@ -588,7 +691,7 @@ void initGrid() {
 }
 void initGeometry() {
   std::cout << "Loading model ..." << std::endl;
-  loadModel("../../resources/cube.obj");
+  loadModel("../../resources/pig_c.obj");
 
   glGenVertexArrays(1, &model_vao);
   glBindVertexArray(model_vao);
@@ -627,7 +730,7 @@ void initTexture() {
 
   glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
 
-  /* glActiveTexture(GL_TEXTURE0);
+  glActiveTexture(GL_TEXTURE0);
   glGenTextures(1, &tex_handle);
   glBindTexture(GL_TEXTURE_2D, tex_handle);
 
@@ -642,11 +745,11 @@ void initTexture() {
   GLenum channel = GL_NONE;
   GLenum channel_format;
 
-  loadTexture(pixels, width, height, channel, channel_format);
-
+  // loadTexture(pixels, width, height, channel, channel_format);
+  auto textureData = loadTexture(width, height, channel, channel_format);
   std::cout << "Width: " << width << " Height: " << height << std::endl;
 
-  glTexImage2D(GL_TEXTURE_2D, 0, channel, width, height, 0, channel, channel_format, pixels.data()); */
+  glTexImage2D(GL_TEXTURE_2D, 0, channel, width, height, 0, GL_RGBA, channel_format, textureData);
 }
 void initFramebufferThread() {
   glActiveTexture(GL_TEXTURE3);
@@ -672,17 +775,6 @@ void initFramebufferThread() {
   }
   glFlush();
 }
-/* void copyFrameBuffer(GLuint fbuffer) {
-  glBindFramebuffer(GL_READ_FRAMEBUFFER, fbuffer);
-  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-  glBlitFramebuffer(0, 0, width, height,
-                    0, 0, width, height,
-                    GL_COLOR_BUFFER_BIT,
-                    GL_NEAREST);
-  glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-}
- */
 
 //RENDERING
 /* Render thread */
@@ -699,7 +791,15 @@ void render() {
   glEnable(GL_DEPTH_TEST);
   glDepthFunc(GL_LESS);
   // glBindTexture(GL_TEXTURE_2D, quad_handle);
+  glUseProgram(default_program);
   initGeometry();
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, tex_handle);  
+
+  GLuint location = glGetUniformLocation(default_program, "tex_handle");
+  glUniform1i(location, 0);
+
   updateUniforms(default_program);
   gl_mutex.lock();
   initFramebufferThread();
@@ -714,23 +814,29 @@ void render() {
   glGetQueryObjectui64v(query_handle_th[1], GL_QUERY_RESULT, &stop_time);
   std::cout << "Init Time (RENDER THREAD): " << (stop_time - start_time)/1000000.0 << " ms" << std::endl; */
   
+  glm::fmat4 model_matrix_ = glm::fmat4{1.0f};
+  
+  // model_matrix_ = glm::rotate(model_matrix_, 1.57f, glm::vec3{0.0f,1.0f,0.0f});
+  // 
+  location = glGetUniformLocation(default_program, "ModelMatrix");
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
+  
   for(;;) {
     gl_mutex.lock();
+    glUseProgram(default_program);    
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_handle);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glBindVertexArray(model_vao);
-    glUseProgram(default_program);
 
-    glm::fmat4 model_matrix_ = glm::fmat4{1.0f};
-	  // model_matrix_ = glm::rotate(model_matrix_, float(glfwGetTime()) *0.1f, glm::vec3{0.0f,1.0f,0.0f});
-    GLuint location = glGetUniformLocation(default_program, "ModelMatrix");
+    // model_matrix_ = glm::rotate(model_matrix_, 1.57f, glm::vec3{0.0f,1.0f,0.0f});
+    // std::cout << glm::sin(float(glfwGetTime())*0.00001f) << std::endl;
+    model_matrix_ = glm::rotate(model_matrix_, glm::sin(float(glfwGetTime())*0.00001f), glm::vec3{0.0f,1.0f,0.0f});
     glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(model_matrix_));
 
 	  glDrawArrays(GL_TRIANGLES, 0, m_vertices.size());
-    glFlush();
-
+    // glFlush();
+    glFinish();  
     gl_mutex.unlock();
   }
 }
@@ -805,6 +911,7 @@ int main(int argc, char **argv) {
   }
   // glfwSetWindowShouldClose(offscreen_context, 1);
   t.join();
+  FreeImage_DeInitialise();
   glfwDestroyWindow(offscreen_context);
   glfwDestroyWindow(window);  
   glfwTerminate();
