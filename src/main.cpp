@@ -72,11 +72,13 @@ GLuint point_program;
 
 
 // fbo, texture and renderbuffer handles
-GLuint quad_handle;
+GLuint quad_handle_read;
+GLuint quad_handle_write;
 GLuint fbo_handle;
 GLuint rb_handle;
 GLuint tex_handle;
-GLuint depth_handle;
+GLuint depth_handle_read;
+GLuint depth_handle_write;
 
 // mutex
 std::mutex gl_mutex;
@@ -132,6 +134,84 @@ std::vector<glm::vec2> m_uvs;
 std::vector<glm::vec3> m_normals;
 std::vector<uint32_t> m_indices;
 
+struct Texture {
+  Texture() = default;
+  Texture(GLuint64 &rh, GLuint &bh) :
+    resident_handle(rh),
+    binding_handle(bh) 
+  {}
+
+  GLuint64 resident_handle;
+  GLuint binding_handle;
+}; 
+
+using texture_ptr = std::shared_ptr<Texture>; 
+
+struct Doublebuffer {
+  Doublebuffer() = default;
+
+  void init(GLuint &color_read, GLuint &color_write, GLuint &depth_read, GLuint &depth_write) {
+    updated = false;
+    rendered_first_time = false;
+    GLuint64 crh = glGetTextureHandleARB(color_read);
+    GLuint64 cwh = glGetTextureHandleARB(color_write);
+    GLuint64 drh = glGetTextureHandleARB(depth_read);
+    GLuint64 dwh = glGetTextureHandleARB(depth_write);
+
+    auto color_read_tex = std::make_shared<Texture>(crh, color_read);
+    auto color_write_tex = std::make_shared<Texture>(cwh, color_write);
+    auto depth_read_tex = std::make_shared<Texture>(drh, depth_read);
+    auto depth_write_tex = std::make_shared<Texture>(dwh, depth_write);
+
+    color_buffer = std::make_pair(color_read_tex, color_write_tex);
+    depth_buffer = std::make_pair(depth_read_tex, depth_write_tex);
+
+    initialized = true;
+  }
+
+  void make_resident() {
+    glMakeTextureHandleResidentARB(color_buffer.first->resident_handle);
+    glMakeTextureHandleResidentARB(color_buffer.second->resident_handle);
+    glMakeTextureHandleResidentARB(depth_buffer.first->resident_handle);
+    glMakeTextureHandleResidentARB(depth_buffer.second->resident_handle);
+  }
+
+  void swap_buffers() {
+    if(updated) {
+      std::lock_guard<std::mutex> lock(copy_mutex);
+      std::swap(color_buffer.first, color_buffer.second);
+      std::swap(depth_buffer.first, depth_buffer.second);
+      updated = false;
+    }
+  }
+
+  Doublebuffer& operator=(Doublebuffer const& rhs) {
+    if (this != &rhs) {
+      std::lock(copy_mutex, rhs.copy_mutex);
+      std::lock_guard<std::mutex> m_lhs(copy_mutex, std::adopt_lock);
+      std::lock_guard<std::mutex> m_rhs(rhs.copy_mutex, std::adopt_lock);
+      color_buffer = rhs.color_buffer;
+      depth_buffer = rhs.depth_buffer;
+      initialized = rhs.initialized;
+      rendered_first_time = rhs.rendered_first_time;
+      updated = rhs.updated;
+    }
+    return *this;
+  }
+
+  std::pair<texture_ptr, texture_ptr> color_buffer;
+  std::pair<texture_ptr, texture_ptr> depth_buffer;
+
+  mutable std::mutex copy_mutex;
+
+  bool initialized = false;
+  bool rendered_first_time;
+  bool updated;
+
+};
+
+std::shared_ptr<Doublebuffer> texture_buffer = std::make_shared<Doublebuffer>();
+
 void printMatrix(glm::fmat4 const& matrix, std::string const& name);
 void initShaders();
 // UNIFORM FUNCTIONS
@@ -154,10 +234,10 @@ void setProjection(GLFWwindow* win, int w, int h, GLuint const& program) {
 
   float aspect_ratio = float(w)/float(h);
   float fov = glm::radians(45.0f);
-  std::cout << "Aspect: " << aspect_ratio	<< " FOV: " << fov << std::endl;
+  // std::cout << "Aspect: " << aspect_ratio	<< " FOV: " << fov << std::endl;
 
   glm::fmat4 cam_projection = glm::perspective(fov, aspect_ratio, 0.1f, 100.0f);
-  printMatrix(cam_projection, "Cam");
+  // printMatrix(cam_projection, "Cam");
   view_projection = cam_projection;
   updateProjection(program);
 }
@@ -165,7 +245,7 @@ void updateUniforms(GLuint const& program) {
   glUseProgram(program);
   int w_width, w_height;
   glfwGetFramebufferSize(window, &w_width, &w_height);
-  std::cout << "W: " << w_width << " H: " << w_height << std::endl;
+  // std::cout << "W: " << w_width << " H: " << w_height << std::endl;
   setProjection(window, width, height, program);
 
   updateView(program);
@@ -628,7 +708,7 @@ void genGrid() {
   float W = width/16;
   float H = height/16;
 
-  std::cout << "W: " << W << "; H: " << H << std::endl;
+  // std::cout << "W: " << W << "; H: " << H << std::endl;
 
   for(int i = 0; i < W+1; i++) {
     for(int j = 0; j < H+1; j++) {
@@ -712,9 +792,18 @@ void initGeometry() {
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, (void*) 0);
 }
 void initTexture() {
-  glActiveTexture(GL_TEXTURE3);
-  glGenTextures(1, &quad_handle);
-  glBindTexture(GL_TEXTURE_2D, quad_handle);
+  glActiveTexture(GL_TEXTURE0);
+  glGenTextures(1, &quad_handle_read);
+  glBindTexture(GL_TEXTURE_2D, quad_handle_read);
+
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
+
+  glActiveTexture(GL_TEXTURE1);
+  glGenTextures(1, &quad_handle_write);
+  glBindTexture(GL_TEXTURE_2D, quad_handle_write);
 
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -722,15 +811,24 @@ void initTexture() {
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
 
   glActiveTexture(GL_TEXTURE2);
-  glGenTextures(1, &depth_handle);
-  glBindTexture(GL_TEXTURE_2D, depth_handle);
+  glGenTextures(1, &depth_handle_read);
+  glBindTexture(GL_TEXTURE_2D, depth_handle_read);
 
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
   glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
 
-  glActiveTexture(GL_TEXTURE0);
+  glActiveTexture(GL_TEXTURE3);
+  glGenTextures(1, &depth_handle_write);
+  glBindTexture(GL_TEXTURE_2D, depth_handle_write);
+
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+
+  glActiveTexture(GL_TEXTURE4);
   glGenTextures(1, &tex_handle);
   glBindTexture(GL_TEXTURE_2D, tex_handle);
 
@@ -747,12 +845,12 @@ void initTexture() {
 
   // loadTexture(pixels, width, height, channel, channel_format);
   auto textureData = loadTexture(width, height, channel, channel_format);
-  std::cout << "Width: " << width << " Height: " << height << std::endl;
+  // std::cout << "Width: " << width << " Height: " << height << std::endl;
 
   glTexImage2D(GL_TEXTURE_2D, 0, channel, width, height, 0, GL_RGBA, channel_format, textureData);
 }
 void initFramebufferThread() {
-  glActiveTexture(GL_TEXTURE3);
+  // glActiveTexture(GL_TEXTURE1);
   // glGenRenderbuffers(1, &rb_handle);
   // glBindRenderbuffer(GL_RENDERBUFFER, rb_handle);
   // glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
@@ -762,9 +860,11 @@ void initFramebufferThread() {
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_handle);
   // glBindRenderbuffer(GL_RENDERBUFFER, rb_handle);
   // glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rb_handle);
-  glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, quad_handle, 0);
-  glActiveTexture(GL_TEXTURE2);
-  glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depth_handle, 0);
+  std::cout << "[SLOW] attaching color buffer to fbo ..." << std::endl;
+  glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture_buffer->color_buffer.second->binding_handle, 0);
+  // glActiveTexture(GL_TEXTURE3);
+  std::cout << "[SLOW] attaching depth buffer to fbo ..." << std::endl;
+  glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, texture_buffer->depth_buffer.second->binding_handle, 0);
 
   GLenum draw_buffer[1] = {GL_COLOR_ATTACHMENT0};
   glDrawBuffers(1, draw_buffer);
@@ -794,11 +894,11 @@ void render() {
   glUseProgram(default_program);
   initGeometry();
 
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, tex_handle);  
+  glActiveTexture(GL_TEXTURE4);
+  glBindTexture(GL_TEXTURE_2D, tex_handle);
 
   GLuint location = glGetUniformLocation(default_program, "tex_handle");
-  glUniform1i(location, 0);
+  glUniform1i(location, 4);
 
   updateUniforms(default_program);
   gl_mutex.lock();
@@ -823,46 +923,55 @@ void render() {
 
   
   for(;;) {
-    gl_mutex.lock();
-    glUseProgram(default_program);    
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo_handle);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glBindVertexArray(model_vao);
+    if (texture_buffer->initialized)
+    {
+      gl_mutex.lock();
+      glUseProgram(default_program);    
+      glBindFramebuffer(GL_FRAMEBUFFER, fbo_handle);
+      glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+      glBindVertexArray(model_vao);
 
-    // model_matrix_ = glm::rotate(model_matrix_, 1.57f, glm::vec3{0.0f,1.0f,0.0f});
-    // std::cout << glm::sin(float(glfwGetTime())*0.00001f) << std::endl;
-    model_matrix_ = glm::rotate(model_matrix_, glm::sin(float(glfwGetTime())*0.00001f), glm::vec3{0.0f,1.0f,0.0f});
-    glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(model_matrix_));
+      // model_matrix_ = glm::rotate(model_matrix_, 1.57f, glm::vec3{0.0f,1.0f,0.0f});
+      // std::cout << glm::sin(float(glfwGetTime())*0.00001f) << std::endl;
+      model_matrix_ = glm::rotate(model_matrix_, glm::sin(float(glfwGetTime())*0.00001f), glm::vec3{0.0f,1.0f,0.0f});
+      glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(model_matrix_));
 
-	  glDrawArrays(GL_TRIANGLES, 0, m_vertices.size());
-    // glFlush();
-    glFinish();  
-    gl_mutex.unlock();
+      glDrawArrays(GL_TRIANGLES, 0, m_vertices.size());
+      // glFlush();
+      glFinish();  
+      if (!texture_buffer->rendered_first_time) texture_buffer->rendered_first_time = true;
+      texture_buffer->updated = true;
+      gl_mutex.unlock();
+    }
   }
 }
 
 /* Warping thread */
 void draw() {
-  glActiveTexture(GL_TEXTURE3);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  glUseProgram(quad_program);
-  glBindVertexArray(grid_vao);
-  // glBindVertexArray(quad_vao);
-  GLuint location = glGetUniformLocation(quad_program, "quad_tex");
-  glUniform1i(location, 3);
-  glActiveTexture(GL_TEXTURE2);
-  glBindTexture(GL_TEXTURE_2D, depth_handle);
-  location = glGetUniformLocation(quad_program, "depth_tex");
-  glUniform1i(location, 2);
+  if (texture_buffer->initialized && texture_buffer->rendered_first_time)
+    texture_buffer->swap_buffers();
+    //glActiveTexture(GL_TEXTURE0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glUseProgram(quad_program);
+    glBindVertexArray(grid_vao);
+    // glBindVertexArray(quad_vao);
+    GLuint location = glGetUniformLocation(quad_program, "quad_tex");
+    // glUniform1i(location, 0);
+    glUniformHandleui64ARB(location, texture_buffer->color_buffer.first->resident_handle);
+    //glActiveTexture(GL_TEXTURE2);
+    // glBindTexture(GL_TEXTURE_2D, texture_buffer->depth_buffer.first);
+    location = glGetUniformLocation(quad_program, "depth_tex");
+    // glUniform1i(location, 2);
+    glUniformHandleui64ARB(location, texture_buffer->depth_buffer.first->resident_handle);
 
-  // model_matrix = glm::rotate(model_matrix, float(glfwGetTime()) * 0.00001f, glm::vec3{0.0,1.0,0.0});
-  location = glGetUniformLocation(quad_program, "ModelMatrix");
-  glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(model_matrix));
-  // printMatrix(model_matrix, "Model");
+    // model_matrix = glm::rotate(model_matrix, float(glfwGetTime()) * 0.00001f, glm::vec3{0.0,1.0,0.0});
+    location = glGetUniformLocation(quad_program, "ModelMatrix");
+    glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(model_matrix));
+    // printMatrix(model_matrix, "Model");
 
-  //glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
-  glDrawElements(GL_TRIANGLES, g_indices.size()*3, GL_UNSIGNED_INT, 0);
+    //glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+    glDrawElements(GL_TRIANGLES, g_indices.size()*3, GL_UNSIGNED_INT, 0);
   // glDrawArrays(GL_TRIANGLE_STRIP, 0, 8);
 }
 
@@ -874,6 +983,8 @@ int main(int argc, char **argv) {
 
   initShaders();
   initTexture();
+  texture_buffer->init(quad_handle_read, quad_handle_write, depth_handle_read, depth_handle_write);
+  texture_buffer->make_resident();
   initQuad();
   genGrid();
   initGrid();
@@ -881,7 +992,7 @@ int main(int argc, char **argv) {
   std::cout << "Start thread" << std::endl;
   std::thread t = std::thread(render);
   glfwMakeContextCurrent(window);
-  glBindTexture(GL_TEXTURE_2D, quad_handle);
+  // glBindTexture(GL_TEXTURE_2D, quad_handle_read);
 
   updateUniforms(quad_program );
   glQueryCounter(query_handle[1], GL_TIMESTAMP);

@@ -19,7 +19,7 @@ class Trackball {
       m_position{glm::fvec3(0.0f,0.0f,-5.0f)},
       m_proj_matrix{glm::fmat4(1.0f)} {
         m_view_matrix = glm::lookAt(m_position, m_target, m_up);
-        printMatrix(m_view_matrix, "CTOR VIEW");
+        // printMatrix(m_view_matrix, "CTOR VIEW");
       }
     Trackball(float const& r, glm::fvec3 const& up, glm::fvec3 const& target, glm::fvec3 const& position) :
       m_radius{r},
@@ -28,7 +28,7 @@ class Trackball {
       m_position{position},
       m_proj_matrix{glm::fmat4(1.0f)} {
         m_view_matrix = glm::lookAt(m_position, m_target, m_up);
-        printMatrix(m_view_matrix, "CTOR VIEW");  
+        // printMatrix(m_view_matrix, "CTOR VIEW");  
       }
     ~Trackball() {}
 	  void printMatrix(glm::fmat4 const& matrix, std::string const& name);

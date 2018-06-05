@@ -1,4 +1,5 @@
 #version 330
+#extension GL_ARB_bindless_texture : require
 
 in Fragment {
   vec2 uvs;
@@ -7,8 +8,8 @@ in Fragment {
 
 out vec4 out_color;
 
-uniform sampler2D quad_tex;
-uniform sampler2D depth_tex;
+layout(bindless_sampler) uniform sampler2D quad_tex;
+layout(bindless_sampler) uniform sampler2D depth_tex;
 
 
 void main() {

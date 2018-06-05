@@ -16,14 +16,19 @@ add_subdirectory(externals/glbinding)
 
 include_directories(externals/stb)
 
+include_directories(externals/freeimage/include)
+link_directories(externals/freeimage/lib)
+# add_subdirectory(externals/freeimage/include)
+
 add_subdirectory(externals/tinyobjloader)
 
 include_directories(externals/tinyobjloader)
 file(GLOB TINYOBJLOADER_SOURCES "externals/tinyobjloader/*.h")
 
-
 file(GLOB TRACKING_SRC
   # "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/trackball.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/trackball.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
 )
 
@@ -36,5 +41,5 @@ add_executable(OpenGL-Threading ${TRACKING_SRC})
 add_executable(Singlethread ${SINGLE_THREAD})
 
 
-target_link_libraries(OpenGL-Threading glbinding glfw ${GLFW_LIBRARIES})
-target_link_libraries(Singlethread glbinding glfw ${GLFW_LIBRARIES})
+target_link_libraries(OpenGL-Threading freeimage glbinding glfw ${GLFW_LIBRARIES})
+target_link_libraries(Singlethread freeimage glbinding glfw ${GLFW_LIBRARIES})

@@ -1,5 +1,6 @@
 #version 330
 #extension GL_ARB_explicit_attrib_location : require
+#extension GL_ARB_bindless_texture : require
 
 layout(location = 0) in vec3 in_position;
 layout(location = 1) in vec2 in_uvs;
@@ -10,7 +11,7 @@ uniform mat4 ViewMatrix;
 // NEW VIEW
 uniform mat4 SecondView;
 uniform mat4 ModelMatrix;
-uniform sampler2D depth_tex;
+layout(bindless_sampler) uniform sampler2D depth_tex;
 
 // out vec2 pass_uvs;
 // out float pass_depth;
